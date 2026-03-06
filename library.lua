@@ -331,6 +331,137 @@ do
 end
 
 do
+    -- ─── Config system ───────────────────────────────────────────────────────────
+
+    local function serializeColor(c)
+        return {r = c.R, g = c.G, b = c.B}
+    end
+
+    local function deserializeColor(t)
+        return Color3.new(t.r, t.g, t.b)
+    end
+
+    local CONFIG_FOLDER = 'uilib_configs'
+
+    function UILib:SaveConfig(name)
+        if not name or name == '' then
+            self:Notification('Config name cannot be empty!', 4)
+            return false
+        end
+
+        if not isfolder(CONFIG_FOLDER) then
+            makefolder(CONFIG_FOLDER)
+        end
+
+        local data = {}
+        for tabName, tabContent in pairs(self._tree) do
+            data[tabName] = {}
+            for sectionName, sectionContent in pairs(tabContent._items) do
+                data[tabName][sectionName] = {}
+                for idx, item in ipairs(sectionContent._items) do
+                    local entry = {type_ = item.type_}
+
+                    if item.type_ == 'toggle' then
+                        entry.value = item.value
+                        if item.keybind then
+                            entry.keybind = {value = item.keybind.value, mode = item.keybind.mode}
+                        end
+                        if item.colorpicker then
+                            entry.colorpicker = serializeColor(item.colorpicker.value)
+                        end
+                    elseif item.type_ == 'slider' then
+                        entry.value = item.value
+                    elseif item.type_ == 'dropdown' then
+                        entry.value = item.value
+                    elseif item.type_ == 'textbox' then
+                        entry.value = item.value
+                    end
+
+                    data[tabName][sectionName][tostring(idx)] = entry
+                end
+            end
+        end
+
+        local ok, result = pcall(function()
+            return game:GetService('HttpService'):JSONEncode(data)
+        end)
+        if not ok then
+            self:Notification('Failed to encode config!', 4)
+            return false
+        end
+
+        writefile(CONFIG_FOLDER .. '/' .. name .. '.json', result)
+        self:Notification('Saved "' .. name .. '"!', 4)
+        return true
+    end
+
+    function UILib:LoadConfig(name)
+        if not name or name == '' then
+            self:Notification('Config name cannot be empty!', 4)
+            return false
+        end
+
+        local path = CONFIG_FOLDER .. '/' .. name .. '.json'
+        if not isfile(path) then
+            self:Notification('"' .. name .. '" not found!', 4)
+            return false
+        end
+
+        local ok, data = pcall(function()
+            return game:GetService('HttpService'):JSONDecode(readfile(path))
+        end)
+        if not ok or type(data) ~= 'table' then
+            self:Notification('Failed to load "' .. name .. '"!', 4)
+            return false
+        end
+
+        for tabName, tabContent in pairs(data) do
+            if self._tree[tabName] then
+                for sectionName, sectionContent in pairs(tabContent) do
+                    if self._tree[tabName]._items[sectionName] then
+                        for idxStr, entry in pairs(sectionContent) do
+                            local idx = tonumber(idxStr)
+                            local item = self._tree[tabName]._items[sectionName]._items[idx]
+                            if item and item.type_ == entry.type_ then
+                                if item.type_ == 'toggle' then
+                                    item.value = entry.value
+                                    if item.callback then item.callback(entry.value) end
+                                    if entry.keybind and item.keybind then
+                                        item.keybind.value = entry.keybind.value
+                                        item.keybind.mode  = entry.keybind.mode
+                                        if item.keybind.callback then
+                                            local id = entry.keybind.value and self._inputs[entry.keybind.value] and self._inputs[entry.keybind.value].id
+                                            item.keybind.callback(id, entry.keybind.mode)
+                                        end
+                                    end
+                                    if entry.colorpicker and item.colorpicker then
+                                        local c = deserializeColor(entry.colorpicker)
+                                        item.colorpicker.value = c
+                                        if item.colorpicker.callback then item.colorpicker.callback(c) end
+                                    end
+                                elseif item.type_ == 'slider' then
+                                    item.value = entry.value
+                                    if item.callback then item.callback(entry.value) end
+                                elseif item.type_ == 'dropdown' then
+                                    item.value = entry.value
+                                    if item.callback then item.callback(entry.value) end
+                                elseif item.type_ == 'textbox' then
+                                    item.value = entry.value
+                                    if item.callback then item.callback(entry.value) end
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+        end
+
+        self:Notification('Loaded "' .. name .. '"!', 4)
+        return true
+    end
+
+    -- ─────────────────────────────────────────────────────────────────────────────
+
     function UILib:_SpawnColorpicker(position, label, value, callback)
         self:_RemoveColorpicker()
 
@@ -620,6 +751,7 @@ do
     function UILib:CreateSettingsTab(customName)
         local settingsTab = self:Tab(customName or 'Menu')
 
+        -- ── Menu section ──────────────────────────────────────────────────────────
         local menuSection = settingsTab:Section('Menu')
         local menuKey = menuSection:Toggle('Ov. menu key', self._overwrite_menu_key, function(newValue)
             self._overwrite_menu_key = newValue
@@ -638,6 +770,23 @@ do
             self._custom_title = newValue
         end)
 
+        -- ── Configs section ───────────────────────────────────────────────────────
+        local configSection = settingsTab:Section('Configs')
+
+        local configName = 'default'
+        local configNameBox = configSection:Textbox('Config name', configName, function(newValue)
+            configName = (newValue and newValue ~= '') and newValue or 'default'
+        end)
+
+        configSection:Button('Save config', function()
+            self:SaveConfig(configName)
+        end)
+
+        configSection:Button('Load config', function()
+            self:LoadConfig(configName)
+        end)
+
+        -- ── Theming section ───────────────────────────────────────────────────────
         local themingSection = settingsTab:Section('Theming')
         local themes = {'Default', 'Gamesense', 'Bitchbot'}
         local themingTextColor, themingBodyColor, themingAccentColor, themingSubtextColor, themingBorder0Color, themingBorder1Color, themingSurface0Color, themingSurface1Color, themingCrustColor
@@ -648,7 +797,6 @@ do
 
             local theme = newValue[1]
             if theme == themes[1] then
-                -- default
                 themingAccentColor:Set(Color3.fromRGB(0, 128, 255))
                 themingBodyColor:Set(Color3.fromRGB(5, 5, 5))
                 themingTextColor:Set(Color3.fromRGB(255, 255, 255))
@@ -659,7 +807,6 @@ do
                 themingSurface0Color:Set(Color3.fromRGB(24, 24, 24))
                 themingCrustColor:Set(Color3.fromRGB(0, 0, 0))
             elseif theme == themes[2] then
-                -- gamesense
                 themingAccentColor:Set(Color3.fromRGB(114, 178, 21))
                 themingBodyColor:Set(Color3.fromRGB(0, 0, 0))
                 themingTextColor:Set(Color3.fromRGB(144, 144, 144))
@@ -670,7 +817,6 @@ do
                 themingSurface0Color:Set(Color3.fromRGB(26, 26, 26))
                 themingCrustColor:Set(Color3.fromRGB(0, 0, 0))
             elseif theme == themes[3] then
-                -- bitchbot
                 themingAccentColor:Set(Color3.fromRGB(120, 85, 147))
                 themingBodyColor:Set(Color3.fromRGB(31, 31, 31))
                 themingTextColor:Set(Color3.fromRGB(202, 201, 201))
@@ -729,7 +875,7 @@ do
 
         themingTheme:Set({'Default'})
 
-        return settingsTab, menuSection, themingSection
+        return settingsTab, menuSection, configSection, themingSection
     end
 
     function UILib:RegisterActivity(activity)
@@ -1275,7 +1421,6 @@ do
                                 self:_Draw(sectionItemId .. '_slider', 'gradient', nil, 20, 'vertical', sliderOrigin + Vector2.new(1, 1), Vector2.new(sliderSize.x * fillPercent - 2, sliderSize.y - 2), tickColor)
 
                                 local displayedValue = tostring(itemValue) .. sectionItem.suffix
-                                -- local valueSize = self:_GetTextBounds(displayedValue, nil, 12)
                                 self:_Draw(sectionItemId .. '_value', 'text', self._theming.text, 22, sliderOrigin + Vector2.new(sliderSize.x * fillPercent, sliderSize.y), displayedValue, true, 'center', 12)
 
                                 self:_Draw(sectionItemId .. '_border', 'rect', self._theming.crust, 21, sliderOrigin, sliderSize, false)
